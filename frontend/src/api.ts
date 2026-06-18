@@ -34,6 +34,15 @@ export interface QAPairList {
   speaker_labels: Record<string, string> | null
 }
 
+export interface AutoQAPairPreview {
+  question: string
+  answer: string
+}
+
+export interface AutoQAPairPreviewResponse {
+  qa_pairs: AutoQAPairPreview[]
+}
+
 export async function fetchRecordings(): Promise<Recording[]> {
   const res = await fetch(`${BASE}/recordings`)
   if (!res.ok) throw new Error('Failed to fetch recordings')
@@ -103,6 +112,12 @@ export async function extractQAPairs(recordingId: string): Promise<QAPairList> {
 
 export async function fetchQAPairs(recordingId: string): Promise<QAPairList> {
   const res = await fetch(`${BASE}/recordings/${recordingId}/qa-pairs`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function autoQaPreview(recordingId: string): Promise<AutoQAPairPreviewResponse> {
+  const res = await fetch(`${BASE}/recordings/${recordingId}/auto-qa`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

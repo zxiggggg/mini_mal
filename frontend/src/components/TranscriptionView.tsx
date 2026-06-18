@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  autoQaPreview,
   extractQAPairs,
   fetchQAPairs,
   generateSuggestions,
@@ -7,10 +8,18 @@ import {
   startTranscribe,
   updateSpeakerLabels,
   updateTranscription,
+  type AutoQAPairPreview,
   type QAPair,
   type Transcription,
 } from '../api'
 import QAPairList from './QAPairList'
+
+type DialogueTurn = {
+  speakerId: string
+  role: string
+  text: string
+  isQuestion: boolean
+}
 
 interface Props {
   recordingId: string
@@ -28,6 +37,7 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
   // Speaker labeling
   const [speakerLabels, setSpeakerLabels] = useState<Record<string, string>>({})
   const [qaPairs, setQaPairs] = useState<QAPair[]>([])
+  const [autoPreview, setAutoPreview] = useState<AutoQAPairPreview[]>([])
   const [extracting, setExtracting] = useState(false)
   const [generating, setGenerating] = useState(false)
 
@@ -45,6 +55,42 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
     return ids
   }, [transcription?.text])
 
+  const dialogueTurns = useMemo(() => {
+    const text = transcription?.text || ''
+    const turns: DialogueTurn[] = []
+    const blocks = text.split(/\n\s*\n/).map(part => part.trim()).filter(Boolean)
+
+    let currentTurn: DialogueTurn | null = null
+
+    const flushCurrentTurn = () => {
+      if (currentTurn) {
+        turns.push(currentTurn)
+        currentTurn = null
+      }
+    }
+
+    for (const block of blocks) {
+      const match = block.match(/^\[说话人 (\S+)\]\s*(.*)$/s)
+      if (!match) continue
+
+      const speakerId = match[1]
+      const content = match[2].trim()
+      const role = speakerLabels[speakerId] || speakerId
+      const isQuestion = role === 'interviewer'
+
+      if (currentTurn && currentTurn.speakerId === speakerId) {
+        currentTurn.text = `${currentTurn.text}\n\n${content}`
+        continue
+      }
+
+      flushCurrentTurn()
+      currentTurn = { speakerId, role, text: content, isQuestion }
+    }
+
+    flushCurrentTurn()
+    return turns
+  }, [transcription?.text, speakerLabels])
+
   useEffect(() => {
     loadTranscription()
   }, [recordingId])
@@ -57,13 +103,15 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
         setEditText(t.text)
         if (t.speaker_labels) setSpeakerLabels(t.speaker_labels)
       }
-      // Load existing QA pairs if any
       try {
         const qa = await fetchQAPairs(recordingId)
         setQaPairs(qa.qa_pairs)
       } catch { /* no qa pairs yet */ }
+      try {
+        const preview = await autoQaPreview(recordingId)
+        setAutoPreview(preview.qa_pairs)
+      } catch { /* no auto preview yet */ }
     } catch (_err) {
-      // No transcription exists yet — show "开始转写" button
       setTranscription(null)
     }
     setLoading(false)
@@ -124,6 +172,18 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
       setError(err instanceof Error ? err.message : '保存标签失败')
     }
     setSaving(false)
+  }
+
+  const handleAutoQA = async () => {
+    setExtracting(true)
+    setError('')
+    try {
+      const result = await autoQaPreview(recordingId)
+      setAutoPreview(result.qa_pairs)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '自动分析失败')
+    }
+    setExtracting(false)
   }
 
   const handleExtractQA = async () => {
@@ -218,29 +278,26 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
             className="w-full h-64 border rounded p-3 font-mono text-sm"
           />
         ) : (
-          <div className="whitespace-pre-wrap text-sm leading-relaxed max-h-96 overflow-y-auto space-y-2">
-            {(transcription.text || '').split('\n\n').map((para, i) => {
-              const match = para.match(/^\[说话人 (\S+)\]\s*(.*)/s)
-              if (!match) return <p key={i} className="text-gray-500">{para}</p>
-              const speakerId = match[1]
-              const text = match[2]
-              const label = speakerLabels[speakerId]
-              const isInterviewer = label === 'interviewer'
-              const badge = label
-                ? (isInterviewer ? '面试官' : '面试者')
-                : speakerId
-              const badgeColor = label
-                ? (isInterviewer ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700')
-                : 'bg-gray-100 text-gray-600'
-              return (
-                <div key={i} className="flex gap-3 items-start">
-                  <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-medium ${badgeColor}`}>
-                    {badge}
-                  </span>
-                  <p className="text-gray-700">{text}</p>
-                </div>
-              )
-            })}
+          <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+            {dialogueTurns.length > 0 ? (
+              dialogueTurns.map((turn, i) => {
+                const isInterviewer = turn.role === 'interviewer'
+                const badge = isInterviewer ? '面试官' : '面试者'
+                const badgeColor = isInterviewer
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-green-100 text-green-700'
+                return (
+                  <div key={i} className={`flex gap-3 items-start ${turn.isQuestion ? 'bg-blue-50/60 rounded-lg p-3' : 'bg-green-50/60 rounded-lg p-3'}`}>
+                    <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-medium ${badgeColor}`}>
+                      {badge}
+                    </span>
+                    <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{turn.text}</p>
+                  </div>
+                )
+              })
+            ) : (
+              <p className="text-gray-500 text-sm whitespace-pre-wrap">{transcription.text || ''}</p>
+            )}
           </div>
         )}
       </div>
@@ -288,6 +345,21 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
       {allLabeled && (
         <div className="border-t pt-4 space-y-3">
           <h3 className="font-medium text-sm text-gray-500">问答对提取</h3>
+          {autoPreview.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="text-xs text-gray-400">自动识别的问答结构预览</h4>
+              <div className="space-y-2">
+                {autoPreview.map((pair, i) => (
+                  <div key={i} className="border rounded-lg p-3 bg-gray-50">
+                    <p className="text-xs text-blue-500 font-medium mb-1">问题 {i + 1}</p>
+                    <p className="text-sm text-gray-800 whitespace-pre-wrap mb-2">{pair.question}</p>
+                    <p className="text-xs text-green-500 font-medium mb-1">回答</p>
+                    <p className="text-sm text-gray-800 whitespace-pre-wrap">{pair.answer}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {qaPairs.length === 0 ? (
             <button
               onClick={handleExtractQA}
@@ -299,7 +371,7 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
           ) : (
             <>
               <QAPairList qaPairs={qaPairs} />
-              <div className="flex gap-4">
+              <div className="flex flex-wrap gap-4">
                 <button
                   onClick={handleExtractQA}
                   disabled={extracting}

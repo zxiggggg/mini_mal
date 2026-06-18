@@ -7,13 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import async_session, get_db
 from ..models import QAPair, Recording, Transcription
 from ..schemas import (
+    AutoQAPairPreviewResponse,
     QAPairListResponse,
     QAPairResponse,
     SpeakerLabelsUpdate,
     TranscriptionResponse,
     TranscriptionUpdate,
 )
-from ..services.qa_extractor import extract_qa_pairs, QAExtractionError
+from ..services.qa_extractor import extract_auto_qa_pairs, extract_qa_pairs, QAExtractionError
 from ..services.suggester import generate_suggestions, SuggestionError
 from ..services.transcriber import transcribe_audio, TranscriptionError
 
@@ -193,6 +194,25 @@ async def list_qa_pairs(recording_id: str, db: AsyncSession = Depends(get_db)):
         qa_pairs=[QAPairResponse.model_validate(qa) for qa in qa_pairs],
         speaker_labels=transcription.speaker_labels,
     )
+
+
+@router.post("/auto-qa", response_model=AutoQAPairPreviewResponse)
+async def auto_qa_preview(recording_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Transcription).where(Transcription.recording_id == recording_id)
+    )
+    transcription = result.scalar_one_or_none()
+    if not transcription:
+        raise HTTPException(404, "Transcription not found")
+    if not transcription.text:
+        raise HTTPException(400, "请先完成转写")
+
+    try:
+        pairs = await extract_auto_qa_pairs(transcription.text)
+    except QAExtractionError as e:
+        raise HTTPException(400, str(e))
+
+    return AutoQAPairPreviewResponse(qa_pairs=pairs)
 
 
 @router.post("/suggestions", response_model=QAPairListResponse)

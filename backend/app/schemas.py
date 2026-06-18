@@ -50,3 +50,12 @@ class QAPairResponse(BaseModel):
 class QAPairListResponse(BaseModel):
     qa_pairs: List[QAPairResponse]
     speaker_labels: Optional[dict]
+
+
+class AutoQAPairPreview(BaseModel):
+    question: str
+    answer: str
+
+
+class AutoQAPairPreviewResponse(BaseModel):
+    qa_pairs: List[AutoQAPairPreview]
