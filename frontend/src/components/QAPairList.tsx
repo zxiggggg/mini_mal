@@ -14,11 +14,11 @@ export default function QAPairList({ qaPairs }: Props) {
         <div key={qa.id || i} className="border rounded-lg overflow-hidden">
           <div className="bg-blue-50 px-4 py-3">
             <p className="text-xs text-blue-500 font-medium mb-1">问题 {i + 1}</p>
-            <p className="text-sm text-gray-800">{qa.question}</p>
+            <p className="text-sm text-gray-800 whitespace-pre-wrap">{qa.question}</p>
           </div>
           <div className="bg-green-50 px-4 py-3">
             <p className="text-xs text-green-500 font-medium mb-1">回答</p>
-            <p className="text-sm text-gray-800">{qa.answer}</p>
+            <p className="text-sm text-gray-800 whitespace-pre-wrap">{qa.answer}</p>
           </div>
           {qa.suggestions && qa.suggestions.length > 0 && (
             <div className="bg-amber-50 px-4 py-3 border-t border-amber-100">
