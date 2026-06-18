@@ -12,3 +12,18 @@ class RecordingResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class TranscriptionResponse(BaseModel):
+    id: str
+    recording_id: str
+    text: str | None
+    status: str
+    error_message: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TranscriptionUpdate(BaseModel):
+    text: str

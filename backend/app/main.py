@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import engine
 from .models import Base
-from .routers import recordings
+from .routers import recordings, transcriptions
 
 
 @asynccontextmanager
@@ -26,6 +26,7 @@ app.add_middleware(
 )
 
 app.include_router(recordings.router)
+app.include_router(transcriptions.router)
 
 
 @app.get("/api/health")
