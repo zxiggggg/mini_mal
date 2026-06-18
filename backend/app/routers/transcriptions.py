@@ -1,8 +1,10 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import get_db
+from ..database import async_session, get_db
 from ..models import QAPair, Recording, Transcription
 from ..schemas import (
     QAPairListResponse,
@@ -16,6 +18,38 @@ from ..services.suggester import generate_suggestions, SuggestionError
 from ..services.transcriber import transcribe_audio, TranscriptionError
 
 router = APIRouter(prefix="/api/recordings/{recording_id}", tags=["transcriptions"])
+
+
+async def _run_transcription_job(recording_id: str) -> None:
+    async with async_session() as db:
+        recording = await db.get(Recording, recording_id)
+        if not recording:
+            return
+
+        result = await db.execute(
+            select(Transcription).where(Transcription.recording_id == recording_id)
+        )
+        transcription = result.scalar_one_or_none()
+        if not transcription:
+            transcription = Transcription(recording_id=recording_id, status="processing")
+            db.add(transcription)
+        else:
+            transcription.status = "processing"
+            transcription.error_message = None
+
+        await db.commit()
+        await db.refresh(transcription)
+
+        try:
+            text = await transcribe_audio(recording.file_path, recording.source_type)
+            transcription.text = text
+            transcription.status = "done"
+            transcription.error_message = None
+        except TranscriptionError as e:
+            transcription.status = "error"
+            transcription.error_message = str(e)
+
+        await db.commit()
 
 
 @router.post("/transcribe", response_model=TranscriptionResponse)
@@ -43,16 +77,7 @@ async def start_transcription(recording_id: str, db: AsyncSession = Depends(get_
     await db.commit()
     await db.refresh(existing)
 
-    try:
-        text = await transcribe_audio(recording.file_path, recording.source_type)
-        existing.text = text
-        existing.status = "done"
-    except TranscriptionError as e:
-        existing.status = "error"
-        existing.error_message = str(e)
-
-    await db.commit()
-    await db.refresh(existing)
+    asyncio.create_task(_run_transcription_job(recording_id))
     return existing
 
 

@@ -5,3 +5,5 @@ aiosqlite==0.20.0
 python-dotenv==1.0.1
 python-multipart==0.0.19
 openai==1.67.0
+requests==2.32.3
+faster-whisper==1.1.1

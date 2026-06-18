@@ -2,21 +2,29 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "18000:8000"
     volumes:
       - ./backend:/app
       - backend_data:/app/data
     environment:
       - DATABASE_URL=sqlite+aiosqlite:///./data/mini_mal.db
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - TRANSCRIBE_FALLBACK=${TRANSCRIBE_FALLBACK:-whisper}
+      - WHISPER_MODEL_SIZE=${WHISPER_MODEL_SIZE:-base}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
+      - WHISPER_COMPUTE_TYPE=${WHISPER_COMPUTE_TYPE:-int8}
+      - WHISPER_LANGUAGE=${WHISPER_LANGUAGE:-zh}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "15173:5173"
     volumes:
       - ./frontend/src:/app/src
+    environment:
+      - VITE_API_BASE_URL=http://backend:8000
+      - VITE_API_PROXY_TARGET=http://backend:8000
     depends_on:
       - backend
 

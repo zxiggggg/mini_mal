@@ -62,7 +62,8 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
         const qa = await fetchQAPairs(recordingId)
         setQaPairs(qa.qa_pairs)
       } catch { /* no qa pairs yet */ }
-    } catch {
+    } catch (_err) {
+      // No transcription exists yet — show "开始转写" button
       setTranscription(null)
     }
     setLoading(false)

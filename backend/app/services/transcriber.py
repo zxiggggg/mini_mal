@@ -3,12 +3,11 @@ import hmac
 import json
 import os
 import time
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
+import requests
 from openai import AsyncOpenAI, AuthenticationError
 
 
@@ -22,6 +21,8 @@ VOLC_HOST = "openspeech.bytedance.com"
 VOLC_SUBMIT = f"https://{VOLC_HOST}/api/v1/vc/submit"
 VOLC_QUERY = f"https://{VOLC_HOST}/api/v1/vc/query"
 
+PROXY_URL = os.getenv("HTTPS_PROXY", os.getenv("HTTP_PROXY", ""))
+
 
 def _volc_sign(key: str, msg: str) -> str:
     return hmac.new(key.encode(), msg.encode(), hashlib.sha256).hexdigest()
@@ -33,26 +34,24 @@ def _volc_authorization(method: str, path: str, query: str, headers: dict, body:
     if not ak or not sk:
         raise TranscriptionError("请检查火山引擎 Access Key / Secret Key 配置")
 
-    # Build signed headers
     signed_headers = "content-type;host;x-date"
-    x_date = headers.get("X-Date", "")
+    x_date = headers["X-Date"]
 
-    # Canonical request
-    canonical = f"{method}\n{path}\n{query}\n"
-    canonical += f"content-type:{headers.get('Content-Type', '')}\n"
-    canonical += f"host:{headers.get('Host', '')}\n"
-    canonical += f"x-date:{x_date}\n"
-    canonical += f"\n{signed_headers}\n"
-    canonical += hashlib.sha256(body).hexdigest()
+    canonical = (
+        f"{method}\n{path}\n{query}\n"
+        f"content-type:{headers['content-type']}\n"
+        f"host:{headers['host']}\n"
+        f"x-date:{x_date}\n"
+        f"\n{signed_headers}\n"
+        f"{hashlib.sha256(body).hexdigest()}"
+    )
 
-    # String to sign
     credential_scope = x_date[:8] + "/cn-north-1/openspeech/request"
     string_to_sign = (
         f"HMAC-SHA256\n{x_date}\n{credential_scope}\n"
         + hashlib.sha256(canonical.encode()).hexdigest()
     )
 
-    # Signing key
     k_date = _volc_sign(sk, x_date[:8])
     k_region = _volc_sign(k_date, "cn-north-1")
     k_service = _volc_sign(k_region, "openspeech")
@@ -62,7 +61,7 @@ def _volc_authorization(method: str, path: str, query: str, headers: dict, body:
 
     return (
         f"HMAC-SHA256 "
-        f"Credential={ak}/{x_date[:8]}/cn-north-1/openspeech/request, "
+        f"Credential={ak}/{credential_scope}, "
         f"SignedHeaders={signed_headers}, "
         f"Signature={signature}"
     )
@@ -78,60 +77,50 @@ def _transcribe_volc(file_path: str) -> str:
     if not full_path.exists():
         raise TranscriptionError("音频文件不存在")
 
-    # Step 1: Submit
-    boundary = uuid.uuid4().hex
-    body_parts = []
-    body_parts.append(f"--{boundary}\r\n".encode())
-    body_parts.append(f'Content-Disposition: form-data; name="appid"\r\n\r\n{app_id}\r\n'.encode())
-    body_parts.append(f"--{boundary}\r\n".encode())
-    body_parts.append(f'Content-Disposition: form-data; name="audio"; filename="{full_path.name}"\r\n'.encode())
-    body_parts.append(f"Content-Type: audio/{full_path.suffix.lstrip('.')}\r\n\r\n".encode())
-    body_parts.append(full_path.read_bytes())
-    body_parts.append(f"\r\n--{boundary}--\r\n".encode())
-    body = b"".join(body_parts)
+    proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
+    if PROXY_URL:
+        print(f"[Volcengine] 使用代理: {PROXY_URL}")
 
     now = datetime.now(timezone.utc)
     x_date = now.strftime("%Y%m%dT%H%M%SZ")
-    parsed = urlparse(VOLC_SUBMIT)
-    headers = {
-        "Host": VOLC_HOST,
-        "X-Date": x_date,
-        "Content-Type": f"multipart/form-data; boundary={boundary}",
-    }
-    headers["Authorization"] = _volc_authorization("POST", parsed.path, "", headers, body)
 
-    req = Request(VOLC_SUBMIT, data=body, headers=headers, method="POST")
-    with urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
+    with open(full_path, "rb") as f:
+        resp = requests.post(
+            VOLC_SUBMIT,
+            data={"appid": app_id},
+            files={"audio": (full_path.name, f, f"audio/{full_path.suffix.lstrip('.')}")},
+            headers={
+                "Host": VOLC_HOST,
+                "X-Date": x_date,
+            },
+            auth=_VolcAuth(app_id),
+            timeout=60,
+            proxies=proxies,
+        )
 
+    result = resp.json()
     if result.get("code") != 1000:
         raise TranscriptionError(f"火山引擎提交失败: {result.get('message', '未知错误')}")
 
     task_id = result["task"]["id"]
 
-    # Step 2: Poll until done
-    query_path = parsed.path.replace("submit", "query")
-    for _ in range(120):  # max 4 minutes
+    for _ in range(120):
         time.sleep(2)
-        now = datetime.now(timezone.utc)
-        x_date = now.strftime("%Y%m%dT%H%M%SZ")
-        q_headers = {
-            "Host": VOLC_HOST,
-            "X-Date": x_date,
-            "Content-Type": "application/json",
-        }
-        q_headers["Authorization"] = _volc_authorization("GET", query_path, f"appid={app_id}&id={task_id}", q_headers, b"")
-
-        q_url = f"{VOLC_QUERY}?appid={app_id}&id={task_id}"
-        req = Request(q_url, headers=q_headers, method="GET")
-        with urlopen(req, timeout=30) as resp:
-            q_result = json.loads(resp.read())
-
-        status = q_result.get("task", {}).get("status", "")
+        x_date = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        resp = requests.get(
+            VOLC_QUERY,
+            params={"appid": app_id, "id": task_id},
+            headers={"Host": VOLC_HOST, "X-Date": x_date},
+            auth=_VolcAuth(app_id),
+            timeout=30,
+            proxies=proxies,
+        )
+        q = resp.json()
+        status = q.get("task", {}).get("status", "")
         if status == "success":
-            utterances = q_result.get("task", {}).get("utterances", [])
+            utterances = q.get("task", {}).get("utterances", [])
             if not utterances:
-                return q_result.get("task", {}).get("text", "")
+                return q.get("task", {}).get("text", "")
             lines = []
             for u in utterances:
                 speaker = u.get("speaker", "?")
@@ -139,17 +128,36 @@ def _transcribe_volc(file_path: str) -> str:
                 if text:
                     lines.append(f"[说话人 {speaker}] {text}")
             return "\n\n".join(lines)
-
         if status == "failed":
-            raise TranscriptionError(f"火山引擎转写失败: {q_result.get('task', {}).get('message', '')}")
+            raise TranscriptionError(f"火山引擎转写失败: {q.get('task', {}).get('message', '')}")
 
     raise TranscriptionError("转写超时，请重试")
+
+
+class _VolcAuth(requests.auth.AuthBase):
+    def __init__(self, app_id: str):
+        self.app_id = app_id
+
+    def __call__(self, r):
+        r.headers["Host"] = VOLC_HOST
+        x_date = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        r.headers["X-Date"] = x_date
+        body = r.body or b""
+        path = urlparse(r.url).path
+        query = urlparse(r.url).query
+        r.headers["Authorization"] = _volc_authorization(
+            r.method,
+            path,
+            query,
+            {"host": VOLC_HOST, "x-date": x_date, "content-type": r.headers.get("Content-Type", "")},
+            body if isinstance(body, bytes) else body.encode(),
+        )
+        return r
 
 
 # ── OpenAI ASR ──────────────────────────────────────────────────
 
 async def _transcribe_openai(file_path: str, source_type: str) -> str:
-    """Transcribe using OpenAI."""
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         raise TranscriptionError("请检查 OpenAI API Key 配置")
@@ -176,12 +184,60 @@ async def _transcribe_openai(file_path: str, source_type: str) -> str:
         raise TranscriptionError(f"转写失败: {str(e)}")
 
 
+# ── Whisper.cpp fallback ────────────────────────────────────────
+
+def _looks_like_free_fallback_enabled() -> bool:
+    return os.getenv("TRANSCRIBE_FALLBACK", "whisper").lower() in {"whisper", "local", "free"}
+
+
+def _parse_target_language() -> str | None:
+    value = os.getenv("WHISPER_LANGUAGE", "").strip()
+    return value or None
+
+
+def _transcribe_local_whisper(file_path: str) -> str:
+    full_path = Path(file_path)
+    if not full_path.exists():
+        raise TranscriptionError("音频文件不存在")
+
+    model_size = os.getenv("WHISPER_MODEL_SIZE", "base")
+    device = os.getenv("WHISPER_DEVICE", "cpu")
+    compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as e:
+        raise TranscriptionError(f"本地转写依赖未安装: {str(e)}")
+
+    try:
+        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        segments, _info = model.transcribe(str(full_path), vad_filter=True, language=_parse_target_language())
+        lines = []
+        for segment in segments:
+            text = (segment.text or "").strip()
+            if text:
+                lines.append(text)
+        if not lines:
+            raise TranscriptionError("本地转写未返回文本")
+        return "\n".join(lines)
+    except TranscriptionError:
+        raise
+    except Exception as e:
+        raise TranscriptionError(f"本地转写失败: {str(e)}")
+
+
 # ── Dispatcher ──────────────────────────────────────────────────
 
 async def transcribe_audio(file_path: str, source_type: str) -> str:
-    """Transcribe audio. Uses Volcengine if configured, otherwise OpenAI."""
     volc_ak = os.getenv("VOLC_ACCESS_KEY", "")
     if volc_ak:
         return _transcribe_volc(file_path)
-    else:
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if api_key:
         return await _transcribe_openai(file_path, source_type)
+
+    if _looks_like_free_fallback_enabled():
+        return _transcribe_local_whisper(file_path)
+
+    raise TranscriptionError("请检查 OpenAI API Key 配置")
