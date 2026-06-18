@@ -2,7 +2,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "18000:8000"
+      - "8000:8000"
     volumes:
       - ./backend:/app
       - backend_data:/app/data
@@ -19,7 +19,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "15173:5173"
+      - "5173:5173"
     volumes:
       - ./frontend/src:/app/src
     environment:
