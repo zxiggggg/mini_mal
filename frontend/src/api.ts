@@ -13,9 +13,24 @@ export interface Transcription {
   id: string
   recording_id: string
   text: string | null
+  speaker_labels: Record<string, string> | null
   status: 'pending' | 'processing' | 'done' | 'error'
   error_message: string | null
   created_at: string
+}
+
+export interface QAPair {
+  id: string
+  transcription_id: string
+  question: string
+  answer: string
+  order_index: number
+  created_at: string
+}
+
+export interface QAPairList {
+  qa_pairs: QAPair[]
+  speaker_labels: Record<string, string> | null
 }
 
 export async function fetchRecordings(): Promise<Recording[]> {
@@ -65,6 +80,28 @@ export async function updateTranscription(recordingId: string, text: string): Pr
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
   })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function updateSpeakerLabels(recordingId: string, speakerLabels: Record<string, string>): Promise<Transcription> {
+  const res = await fetch(`${BASE}/recordings/${recordingId}/speakers`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ speaker_labels: speakerLabels }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function extractQAPairs(recordingId: string): Promise<QAPairList> {
+  const res = await fetch(`${BASE}/recordings/${recordingId}/qa-pairs`, { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function fetchQAPairs(recordingId: string): Promise<QAPairList> {
+  const res = await fetch(`${BASE}/recordings/${recordingId}/qa-pairs`)
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
