@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   extractQAPairs,
   fetchQAPairs,
+  generateSuggestions,
   getTranscription,
   startTranscribe,
   updateSpeakerLabels,
@@ -28,6 +29,7 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
   const [speakerLabels, setSpeakerLabels] = useState<Record<string, string>>({})
   const [qaPairs, setQaPairs] = useState<QAPair[]>([])
   const [extracting, setExtracting] = useState(false)
+  const [generating, setGenerating] = useState(false)
 
   // Parse unique speakers from transcript text
   const speakers = useMemo(() => {
@@ -133,6 +135,18 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
       setError(err instanceof Error ? err.message : '提取失败')
     }
     setExtracting(false)
+  }
+
+  const handleGenerateSuggestions = async () => {
+    setGenerating(true)
+    setError('')
+    try {
+      const result = await generateSuggestions(recordingId)
+      setQaPairs(result.qa_pairs)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : '生成建议失败')
+    }
+    setGenerating(false)
   }
 
   const allLabeled = speakers.length > 0 && speakers.every(s => speakerLabels[s])
@@ -284,13 +298,32 @@ export default function TranscriptionView({ recordingId, filename }: Props) {
           ) : (
             <>
               <QAPairList qaPairs={qaPairs} />
-              <button
-                onClick={handleExtractQA}
-                disabled={extracting}
-                className="text-blue-600 hover:underline text-sm"
-              >
-                {extracting ? '提取中...' : '重新提取'}
-              </button>
+              <div className="flex gap-4">
+                <button
+                  onClick={handleExtractQA}
+                  disabled={extracting}
+                  className="text-blue-600 hover:underline text-sm"
+                >
+                  {extracting ? '提取中...' : '重新提取'}
+                </button>
+                {!qaPairs.some(q => q.suggestions?.length) ? (
+                  <button
+                    onClick={handleGenerateSuggestions}
+                    disabled={generating}
+                    className="bg-amber-600 text-white px-4 py-1.5 rounded text-sm hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    {generating ? '生成中...' : '生成建议'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleGenerateSuggestions}
+                    disabled={generating}
+                    className="text-amber-600 hover:underline text-sm"
+                  >
+                    {generating ? '生成中...' : '重新生成建议'}
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>

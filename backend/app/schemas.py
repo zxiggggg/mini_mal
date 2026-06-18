@@ -40,6 +40,7 @@ class QAPairResponse(BaseModel):
     question: str
     answer: str
     order_index: int
+    suggestions: list[str] | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

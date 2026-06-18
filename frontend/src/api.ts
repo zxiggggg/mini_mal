@@ -25,6 +25,7 @@ export interface QAPair {
   question: string
   answer: string
   order_index: number
+  suggestions: string[] | null
   created_at: string
 }
 
@@ -102,6 +103,12 @@ export async function extractQAPairs(recordingId: string): Promise<QAPairList> {
 
 export async function fetchQAPairs(recordingId: string): Promise<QAPairList> {
   const res = await fetch(`${BASE}/recordings/${recordingId}/qa-pairs`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function generateSuggestions(recordingId: string): Promise<QAPairList> {
+  const res = await fetch(`${BASE}/recordings/${recordingId}/suggestions`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }

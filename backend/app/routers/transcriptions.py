@@ -12,6 +12,7 @@ from ..schemas import (
     TranscriptionUpdate,
 )
 from ..services.qa_extractor import extract_qa_pairs, QAExtractionError
+from ..services.suggester import generate_suggestions, SuggestionError
 from ..services.transcriber import transcribe_audio, TranscriptionError
 
 router = APIRouter(prefix="/api/recordings/{recording_id}", tags=["transcriptions"])
@@ -162,6 +163,42 @@ async def list_qa_pairs(recording_id: str, db: AsyncSession = Depends(get_db)):
         .order_by(QAPair.order_index)
     )
     qa_pairs = result.scalars().all()
+
+    return QAPairListResponse(
+        qa_pairs=[QAPairResponse.model_validate(qa) for qa in qa_pairs],
+        speaker_labels=transcription.speaker_labels,
+    )
+
+
+@router.post("/suggestions", response_model=QAPairListResponse)
+async def create_suggestions(recording_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Transcription).where(Transcription.recording_id == recording_id)
+    )
+    transcription = result.scalar_one_or_none()
+    if not transcription:
+        raise HTTPException(404, "Transcription not found")
+
+    result = await db.execute(
+        select(QAPair)
+        .where(QAPair.transcription_id == transcription.id)
+        .order_by(QAPair.order_index)
+    )
+    qa_pairs = result.scalars().all()
+
+    if not qa_pairs:
+        raise HTTPException(400, "请先提取问答对")
+
+    for qa in qa_pairs:
+        try:
+            suggestions = await generate_suggestions(qa.question, qa.answer)
+            qa.suggestions = suggestions
+        except SuggestionError:
+            qa.suggestions = ["建议生成失败，请重试"]
+
+    await db.commit()
+    for qa in qa_pairs:
+        await db.refresh(qa)
 
     return QAPairListResponse(
         qa_pairs=[QAPairResponse.model_validate(qa) for qa in qa_pairs],
