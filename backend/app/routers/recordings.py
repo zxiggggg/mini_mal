@@ -1,14 +1,18 @@
 import base64
+import csv
+import io
+import json
 import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import Recording
+from ..models import QAPair, Recording, Transcription
 from ..schemas import RecordingResponse
 
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
@@ -106,3 +110,115 @@ async def get_recording(recording_id: str, db: AsyncSession = Depends(get_db)):
     if not recording:
         raise HTTPException(404, "Recording not found")
     return recording
+
+
+@router.get("/{recording_id}/export")
+async def export_recording(recording_id: str, format: str = Query("json"), db: AsyncSession = Depends(get_db)):
+    if format not in ("json", "csv", "txt"):
+        raise HTTPException(400, "format must be json, csv, or txt")
+
+    recording = await db.get(Recording, recording_id)
+    if not recording:
+        raise HTTPException(404, "Recording not found")
+
+    result = await db.execute(
+        select(Transcription).where(Transcription.recording_id == recording_id)
+    )
+    transcription = result.scalar_one_or_none()
+
+    qa_pairs = []
+    if transcription:
+        result = await db.execute(
+            select(QAPair)
+            .where(QAPair.transcription_id == transcription.id)
+            .order_by(QAPair.order_index)
+        )
+        qa_pairs = result.scalars().all()
+
+    data = {
+        "filename": recording.filename,
+        "source_type": recording.source_type,
+        "created_at": recording.created_at.isoformat(),
+        "transcript": transcription.text if transcription else None,
+        "speaker_labels": transcription.speaker_labels if transcription else None,
+        "qa_pairs": [
+            {
+                "question": q.question,
+                "answer": q.answer,
+                "suggestions": q.suggestions,
+            }
+            for q in qa_pairs
+        ],
+    }
+
+    if format == "json":
+        return PlainTextResponse(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename={recording.filename}.json"},
+        )
+
+    if format == "txt":
+        lines = [f"文件：{recording.filename}", f"来源：{recording.source_type}", ""]
+        if transcription and transcription.text:
+            lines.append("=== 转写文本 ===")
+            lines.append(transcription.text)
+            lines.append("")
+        for i, q in enumerate(qa_pairs):
+            lines.append(f"--- 问答对 {i + 1} ---")
+            lines.append(f"问题：{q.question}")
+            lines.append(f"回答：{q.answer}")
+            if q.suggestions:
+                for s in q.suggestions:
+                    lines.append(f"  · {s}")
+            lines.append("")
+        return PlainTextResponse(
+            "\n".join(lines),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename={recording.filename}.txt"},
+        )
+
+    # CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["question", "answer", "suggestions"])
+    for q in qa_pairs:
+        writer.writerow([
+            q.question,
+            q.answer,
+            " | ".join(q.suggestions) if q.suggestions else "",
+        ])
+    return PlainTextResponse(
+        output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={recording.filename}.csv"},
+    )
+
+
+@router.delete("/{recording_id}")
+async def delete_recording(recording_id: str, db: AsyncSession = Depends(get_db)):
+    recording = await db.get(Recording, recording_id)
+    if not recording:
+        raise HTTPException(404, "Recording not found")
+
+    # Delete transcription and QA pairs
+    result = await db.execute(
+        select(Transcription).where(Transcription.recording_id == recording_id)
+    )
+    transcription = result.scalar_one_or_none()
+    if transcription:
+        result = await db.execute(
+            select(QAPair).where(QAPair.transcription_id == transcription.id)
+        )
+        for qa in result.scalars():
+            await db.delete(qa)
+        await db.delete(transcription)
+
+    # Delete audio file
+    file_path = Path(recording.file_path)
+    if file_path.exists():
+        file_path.unlink()
+
+    await db.delete(recording)
+    await db.commit()
+    return {"ok": True}

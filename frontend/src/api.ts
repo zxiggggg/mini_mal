@@ -112,3 +112,12 @@ export async function generateSuggestions(recordingId: string): Promise<QAPairLi
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
+
+export function exportUrl(recordingId: string, format: string): string {
+  return `${BASE}/recordings/${recordingId}/export?format=${format}`
+}
+
+export async function deleteRecording(recordingId: string): Promise<void> {
+  const res = await fetch(`${BASE}/recordings/${recordingId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+}

@@ -39,7 +39,7 @@ export default function App() {
       <div className="grid gap-6">
         <UploadForm onUploaded={load} />
         <AudioRecorder onRecorded={load} />
-        <RecordingList recordings={recordings} loading={loading} onTranscribe={setSelected} />
+        <RecordingList recordings={recordings} loading={loading} onTranscribe={setSelected} onRefresh={load} />
       </div>
     </div>
   )
