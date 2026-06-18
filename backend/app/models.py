@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -16,7 +17,7 @@ class Recording(Base):
     filename: Mapped[str] = mapped_column(String(255))
     source_type: Mapped[str] = mapped_column(String(20))  # "video_call" | "direct_recording"
     file_path: Mapped[str] = mapped_column(String(512))
-    duration: Mapped[float | None] = mapped_column(default=None)
+    duration: Mapped[Optional[float]] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -25,10 +26,10 @@ class Transcription(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     recording_id: Mapped[str] = mapped_column(String(36), ForeignKey("recordings.id"), unique=True)
-    text: Mapped[str | None] = mapped_column(Text, default=None)
-    speaker_labels: Mapped[dict | None] = mapped_column(JSON, default=None)
+    text: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    speaker_labels: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | processing | done | error
-    error_message: Mapped[str | None] = mapped_column(Text, default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -40,5 +41,5 @@ class QAPair(Base):
     question: Mapped[str] = mapped_column(Text)
     answer: Mapped[str] = mapped_column(Text)
     order_index: Mapped[int] = mapped_column(Integer, default=0)
-    suggestions: Mapped[list | None] = mapped_column(JSON, default=None)
+    suggestions: Mapped[Optional[list]] = mapped_column(JSON, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

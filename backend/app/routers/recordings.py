@@ -5,6 +5,7 @@ import json
 import os
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
@@ -14,6 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import QAPair, Recording, Transcription
 from ..schemas import RecordingResponse
+
+
+def _safe_filename(filename: str, ext: str) -> str:
+    safe = filename.rsplit(".", 1)[0] if "." in filename else filename
+    try:
+        safe.encode("ascii")
+    except UnicodeEncodeError:
+        safe = "export"
+    return f"attachment; filename={quote(safe + ext)}"
 
 router = APIRouter(prefix="/api/recordings", tags=["recordings"])
 
@@ -52,7 +62,7 @@ async def upload_recording(
         id=rec_id,
         filename=file.filename or "untitled",
         source_type=source_type,
-        file_path=str(save_path.relative_to(Path.cwd())),
+        file_path=str(save_path.resolve()),
     )
     db.add(recording)
     await db.commit()
@@ -88,7 +98,7 @@ async def record_audio(
         id=rec_id,
         filename=f"browser-recording-{rec_id[:8]}{ext}",
         source_type=source_type,
-        file_path=str(save_path.relative_to(Path.cwd())),
+        file_path=str(save_path.resolve()),
     )
     db.add(recording)
     await db.commit()
@@ -155,7 +165,7 @@ async def export_recording(recording_id: str, format: str = Query("json"), db: A
         return PlainTextResponse(
             json.dumps(data, ensure_ascii=False, indent=2),
             media_type="application/json",
-            headers={"Content-Disposition": f"attachment; filename={recording.filename}.json"},
+            headers={"Content-Disposition": _safe_filename(recording.filename, ".json")},
         )
 
     if format == "txt":
@@ -175,7 +185,7 @@ async def export_recording(recording_id: str, format: str = Query("json"), db: A
         return PlainTextResponse(
             "\n".join(lines),
             media_type="text/plain; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename={recording.filename}.txt"},
+            headers={"Content-Disposition": _safe_filename(recording.filename, ".txt")},
         )
 
     # CSV
@@ -191,7 +201,7 @@ async def export_recording(recording_id: str, format: str = Query("json"), db: A
     return PlainTextResponse(
         output.getvalue(),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={recording.filename}.csv"},
+        headers={"Content-Disposition": _safe_filename(recording.filename, ".csv")},
     )
 
 

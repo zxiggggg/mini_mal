@@ -1,7 +1,13 @@
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Load .env from project root (parent of backend/)
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from .database import engine
 from .models import Base

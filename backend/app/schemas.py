@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -8,7 +9,7 @@ class RecordingResponse(BaseModel):
     filename: str
     source_type: str
     file_path: str
-    duration: float | None
+    duration: Optional[float]
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -17,10 +18,10 @@ class RecordingResponse(BaseModel):
 class TranscriptionResponse(BaseModel):
     id: str
     recording_id: str
-    text: str | None
-    speaker_labels: dict | None
+    text: Optional[str]
+    speaker_labels: Optional[dict]
     status: str
-    error_message: str | None
+    error_message: Optional[str]
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -31,7 +32,7 @@ class TranscriptionUpdate(BaseModel):
 
 
 class SpeakerLabelsUpdate(BaseModel):
-    speaker_labels: dict[str, str]
+    speaker_labels: Dict[str, str]
 
 
 class QAPairResponse(BaseModel):
@@ -40,12 +41,12 @@ class QAPairResponse(BaseModel):
     question: str
     answer: str
     order_index: int
-    suggestions: list[str] | None
+    suggestions: Optional[List[str]]
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class QAPairListResponse(BaseModel):
-    qa_pairs: list[QAPairResponse]
-    speaker_labels: dict | None
+    qa_pairs: List[QAPairResponse]
+    speaker_labels: Optional[dict]
